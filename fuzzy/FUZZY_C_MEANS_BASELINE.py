@@ -58,11 +58,19 @@ def run_fuzzy():
             if nodes_energy[i] > 0:  # only alive nodes
                 clusters[lbl].append(i)
 
-        # Pick CHs as nodes with highest energy in each cluster
+        # --- Step 2: Pick CHs probabilistically based on node energy ---
         chs = [None] * NUM_CLUSTERS
         for cidx, members in enumerate(clusters):
-            if members:
-                chs[cidx] = max(members, key=lambda n: nodes_energy[n])
+            alive_members = [n for n in members if nodes_energy[n] > 0]
+            if not alive_members:
+                continue
+            energies = np.array([nodes_energy[n] for n in alive_members])
+            if energies.sum() == 0:
+                chosen = random.choice(alive_members)
+            else:
+                probs = energies / energies.sum()
+                chosen = np.random.choice(alive_members, p=probs)
+            chs[cidx] = chosen
 
         # Remove empty clusters/None CHs
         clusters = [c for c in clusters if c]
@@ -76,14 +84,14 @@ def run_fuzzy():
                 chs = [chosen]
                 clusters = [[chosen]]
 
-        # === Step 2: Communication & Energy Update ===
+        # === Step 3: Communication & Energy Update ===
         nodes_energy, successful_packets, total_packets = radio_comm(
             clusters, chs, nodes_energy, nodes_pos, base_station, tx_power_factor=1.0,
             successful_packets=0, total_packets=0
         )
         nodes_energy = np.maximum(nodes_energy, 0.0)
 
-        # === Step 3: Metrics ===
+        # === Step 4: Metrics ===
         avg_e_after, pdr_after, alive_after, cluster_sizes = measure_metrics(
             nodes_energy, clusters, chs, successful_packets, total_packets
         )
@@ -106,7 +114,7 @@ def run_fuzzy():
         throughput_history.append(successful_packets)
         pdr_percent_history.append(100.0 * successful_packets / (total_packets + 1e-12))
 
-        plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
+        # plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
 
         if alive_after == 0:
             print(f"[FUZZY] All nodes died at round {rnd}")

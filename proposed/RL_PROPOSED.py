@@ -11,10 +11,11 @@ from proposed.L4_rlql import choose_action, compute_reward, update_q
 from proposed.L5_comm import radio_comm
 from proposed.utils import distance, build_bins, state_from_metrics, measure_metrics
 
-np.random.seed(42)
-random.seed(42)
 
 def run_proposed():
+    np.random.seed(42)
+    random.seed(42)
+    
     # Logging arrays
     avg_energy_history = []
     pdr_history = []

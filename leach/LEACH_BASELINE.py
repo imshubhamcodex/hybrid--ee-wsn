@@ -80,7 +80,7 @@ def run_leach():
         throughput_history.append(successful_packets)
         pdr_percent_history.append(100.0 * successful_packets / (total_packets+1e-12))
 
-        plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
+        # plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
 
         # Terminate if all nodes died
         if alive_after == 0:

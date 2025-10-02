@@ -6,6 +6,37 @@ from deec.utils import distance, measure_metrics
 from deec.L5_comm import radio_comm
 from deec.config import N_NODES, AREA_SIZE, INIT_ENERGY, ROUNDS, N_HALF, P_OPT
 
+def select_CHs_deec(nodes_energy, alive_nodes, round_num, p_opt=P_OPT):
+    """
+    Improved DEEC CH selection to enhance network lifetime.
+    """
+    E_avg = np.sum(nodes_energy) / max(np.sum(alive_nodes), 1)
+    is_CH = np.zeros(N_NODES, dtype=bool)
+
+    for i in range(N_NODES):
+        if not alive_nodes[i]:
+            continue
+
+        Pi = p_opt * (nodes_energy[i] / E_avg) if E_avg > 0 else 0
+        if Pi <= 0: 
+            continue
+
+        # DEECP round-based threshold
+        rounds_until_next_CH = int(1 / Pi) if Pi > 0 else 1
+        denominator = 1 - Pi * (round_num % rounds_until_next_CH)
+        threshold = Pi / denominator if denominator != 0 else 0
+
+        if np.random.rand() < threshold:
+            is_CH[i] = True
+
+    # fallback: if no CHs selected, pick highest-energy alive node
+    if not is_CH.any():
+        alive_idx = np.where(alive_nodes)[0]
+        if len(alive_idx) > 0:
+            is_CH[alive_idx[np.argmax(nodes_energy[alive_idx])]] = True
+
+    return is_CH
+
 def run_deec():
     np.random.seed(42)
     random.seed(42)
@@ -30,28 +61,15 @@ def run_deec():
 
     # Loop for rounds
     for rnd in range(1, ROUNDS+1):
-        alive_nodes = np.sum(nodes_energy > 0)
-        if alive_nodes == 0:
-            print(f"[DEEC] All nodes died at round {rnd}")
-            break
+        alive_nodes = nodes_energy > 0
 
         # === Step 1: Compute average residual energy ===
-        avg_energy = np.mean(nodes_energy[nodes_energy > 0])
+        alive_energy = nodes_energy[alive_nodes]
+        avg_energy = np.mean(alive_energy) if alive_energy.size > 0 else 0
 
-        # === Step 2: CH Selection (DEEC rule) ===
-        chs = []
-        for i in range(N_NODES):
-            if nodes_energy[i] <= 0: 
-                continue
-            Pi = P_OPT * (nodes_energy[i] / avg_energy)   # DEEC probability
-            if random.random() < Pi:
-                chs.append(i)
-
-        if len(chs) == 0:
-            # fallback: pick highest energy node alive
-            alive_nodes_idx = [i for i in range(N_NODES) if nodes_energy[i] > 0]
-            if alive_nodes_idx:
-                chs.append(max(alive_nodes_idx, key=lambda n: nodes_energy[n]))
+        # === Step 2: CH Selection (Improved DEEC rule) ===
+        is_CH = select_CHs_deec(nodes_energy, alive_nodes, rnd)
+        chs = np.where(is_CH)[0].tolist()
 
         # === Step 3: Cluster Formation ===
         clusters = [[] for _ in range(len(chs))]
@@ -89,14 +107,17 @@ def run_deec():
         throughput_history.append(successful_packets)
         pdr_percent_history.append(100.0 * successful_packets / (total_packets+1e-12))
 
-        plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
+        # plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
+
+        if alive_after == 0:
+            print(f"[DEEC] All nodes died at round {rnd}")
+            break
 
     return (
         avg_energy_history, pdr_history, alive_nodes_history, num_ch_history,
         reward_history, epsilon_history, throughput_history, pdr_percent_history,
         first_dead_round, half_dead_round, last_dead_round
     )
-
 
 def plot_cluster(rnd, clusters, nodes_pos, chs, base_station):
     # Cluster plot every 400 rounds

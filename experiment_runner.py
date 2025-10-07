@@ -12,6 +12,7 @@ METHODS = {
     'LEACH_BASELINE': run_leach,
     'DEEC_BASELINE': run_deec,
     'FUZZY_C_MEANS_BASELINE': run_fuzzy,
+    # Add PSO or ACO or Both
     'RL_PROPOSED': run_proposed,
 }
 

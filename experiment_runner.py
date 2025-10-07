@@ -7,12 +7,15 @@ from proposed.config import INIT_ENERGY, N_NODES
 from leach.LEACH_BASELINE import run_leach
 from deec.DEEC_BASELINE import run_deec
 from fuzzy.FUZZY_C_MEANS_BASELINE import run_fuzzy
+from pso.PSO_BASELINE import run_pso
+from aco.ACO_BASELINE import run_aco
 
 METHODS = {
     'LEACH_BASELINE': run_leach,
     'DEEC_BASELINE': run_deec,
     'FUZZY_C_MEANS_BASELINE': run_fuzzy,
-    # Add PSO or ACO or Both
+    'PSO_BASELINE': run_pso,
+    'ACO_BASELINE': run_aco,
     'RL_PROPOSED': run_proposed,
 }
 
@@ -105,7 +108,11 @@ if __name__ == "__main__":
     plt.grid(True)
     plt.show()
 
-    # ----- Table: First, Half, Last Dead Node Rounds -----
+    # ------ Plot 6: Chart Horizontal for All Node Dead for each Algo -----------
+
+
+
+    # ------ Table: First, Half, Last Dead Node Rounds -----
     death_table = pd.DataFrame({
         "Method": list(results.keys()),
         "First Node Death": [res["first_dead_round"] for res in results.values()],

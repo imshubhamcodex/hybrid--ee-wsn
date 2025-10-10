@@ -2,140 +2,32 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 
-# Reuse existing utilities and comm functions from your pso module (common util)
 from pso.utils import distance, measure_metrics
 from pso.L5_comm import radio_comm
-from pso.config import N_NODES, AREA_SIZE, INIT_ENERGY, ROUNDS, NUM_CLUSTERS, N_HALF
+from pso.config import N_NODES, AREA_SIZE, INIT_ENERGY, ROUNDS, N_HALF, NUM_CLUSTERS, PACKET_SIZE_BITS
 
-# GA hyperparameters
-POP_SIZE = 20
-GENS = 20
-TOURNAMENT_K = 3
-CROSSOVER_RATE = 0.8
-MUTATION_RATE = 0.2
-ELITISM = 2  # number of top individuals preserved each generation
+# PSO parameters
+W = 0.8       # inertia weight
+C1 = 1.0      # cognitive weight
+C2 = 1.0      # social weight
+PSO_POP = NUM_CLUSTERS  # number of particles
+GA_GEN = 5    # number of GA generations per round
 
-
-def init_population(alive_nodes):
-    """
-    Population: each individual is a list of NUM_CLUSTERS node indices (candidate CHs).
-    Allow repeats initially but selection and evaluation will prefer diverse & alive CHs.
-    """
-    pop = []
-    for _ in range(POP_SIZE):
-        individual = []
-        # sample unique CHs if possible
-        if len(alive_nodes) >= NUM_CLUSTERS:
-            individual = random.sample(alive_nodes, NUM_CLUSTERS)
-        else:
-            # not enough alive nodes: fill with alive nodes (repeats permitted)
-            while len(individual) < NUM_CLUSTERS:
-                individual.append(random.choice(alive_nodes) if alive_nodes else random.randrange(N_NODES))
-        pop.append(individual)
-    return pop
-
-
-def fitness(individual, nodes_pos, nodes_energy):
-    """
-    Lower is better.
-    Objective: weighted sum of (total distance to nearest CH) and (inverse of average residual energy of chosen CHs).
-    The idea: minimize intra-cluster distance, and prefer CHs with higher remaining energy.
-    """
-    # If any CH dead -> large penalty
-    penalty = 0.0
-    ch_positions = []
-    for ch in individual:
-        if nodes_energy[ch] <= 0:
-            penalty += 1e6  # big penalty for dead CH
-        ch_positions.append(nodes_pos[ch])
-
-    ch_positions = np.array(ch_positions)
-
-    # total distance: each alive node to nearest CH
-    total_dist = 0.0
-    alive_mask = nodes_energy > 0
-    for idx, pos in enumerate(nodes_pos):
-        if not alive_mask[idx]:
-            continue
-        dists = np.linalg.norm(ch_positions - pos, axis=1)
-        total_dist += np.min(dists)
-
-    # energy term: prefer CHs that have higher energy
-    ch_energies = [nodes_energy[ch] for ch in individual]
-    avg_ch_energy = np.mean(ch_energies) if len(ch_energies) > 0 else 1e-6
-
-    # combine: distance normalized by average energy
-    score = total_dist / (avg_ch_energy + 1e-9) + penalty
-    return score
-
-
-def tournament_selection(pop, scores):
-    best = None
-    for _ in range(TOURNAMENT_K):
-        i = random.randrange(len(pop))
-        if best is None or scores[i] < scores[best]:
-            best = i
-    return pop[best][:]  # return a copy
-
-
-def one_point_crossover(a, b):
-    if random.random() > CROSSOVER_RATE:
-        return a[:], b[:]
-    point = random.randint(1, NUM_CLUSTERS - 1)
-    child1 = a[:point] + [g for g in b[point:]]
-    child2 = b[:point] + [g for g in a[point:]]
-    # ensure length
-    child1 = child1[:NUM_CLUSTERS]
-    child2 = child2[:NUM_CLUSTERS]
-    return child1, child2
-
-
-def mutate(ind, alive_nodes):
-    if random.random() > MUTATION_RATE:
-        return ind
-    idx = random.randrange(NUM_CLUSTERS)
-    if alive_nodes:
-        ind[idx] = random.choice(alive_nodes)
-    else:
-        ind[idx] = random.randrange(N_NODES)
-    return ind
-
-
-def individual_to_clusters_and_chs(individual, nodes_pos, nodes_energy):
-    """Assign each alive node to the nearest CH in the individual and derive CH indices used."""
-    # make unique CH list preserving order
-    chs = []
-    for ch in individual:
-        if ch not in chs and nodes_energy[ch] > 0:
-            chs.append(ch)
-    # if no valid CHs, pick one alive node as CH
-    alive_nodes = [i for i in range(N_NODES) if nodes_energy[i] > 0]
-    if not chs and alive_nodes:
-        chs = [random.choice(alive_nodes)]
-
-    clusters = [[] for _ in range(len(chs))]
-    for i in range(N_NODES):
-        if nodes_energy[i] <= 0:
-            continue
-        # find nearest ch position
-        dists = [np.linalg.norm(nodes_pos[i] - nodes_pos[ch]) for ch in chs]
-        argmin = int(np.argmin(dists))
-        clusters[argmin].append(i)
-
-    return clusters, chs
-
+if ROUNDS <= 1000:
+    W = 0.9
+    PSO_POP = 25
 
 def run_pso():
     np.random.seed(42)
     random.seed(42)
 
-    # Logging arrays (same return structure as other methods)
+    # Logging arrays
     avg_energy_history = []
     pdr_history = []
     alive_nodes_history = []
     num_ch_history = []
-    reward_history = []
-    epsilon_history = []
+    reward_history = []        # no RL
+    epsilon_history = []       # no RL
     throughput_history = []
     pdr_percent_history = []
     first_dead_round = None
@@ -145,65 +37,96 @@ def run_pso():
     # Environment initialization
     nodes_pos = np.array([(random.uniform(0, AREA_SIZE), random.uniform(0, AREA_SIZE)) for _ in range(N_NODES)])
     nodes_energy = np.array([INIT_ENERGY] * N_NODES)
-    base_station = np.array([AREA_SIZE / 2, AREA_SIZE / 2])
+    base_station = (AREA_SIZE / 2, AREA_SIZE / 2)
+
+    # Initialize PSO particles: each particle = indices of candidate CHs
+    particles = [np.random.choice(range(N_NODES), NUM_CLUSTERS, replace=False) for _ in range(PSO_POP)]
+    velocities = [np.zeros(NUM_CLUSTERS) for _ in range(PSO_POP)]  # simple 1D velocities per CH index
+    pbest = particles.copy()
+    pbest_scores = [float('inf')] * PSO_POP
+    gbest = None
+    gbest_score = float('inf')
 
     for rnd in range(1, ROUNDS + 1):
-        alive_nodes = [i for i in range(N_NODES) if nodes_energy[i] > 0]
-        if not alive_nodes:
-            print(f"[GA] No alive nodes at start of round {rnd}")
-            break
+        # Evaluate fitness: sum of intra-cluster distances
+        scores = []
+        for pidx, ch_indices in enumerate(particles):
+            clusters = [[] for _ in range(NUM_CLUSTERS)]
+            for i in range(N_NODES):
+                if nodes_energy[i] <= 0:
+                    continue
+                nearest = np.argmin([distance(nodes_pos[i], nodes_pos[ch]) for ch in ch_indices])
+                clusters[nearest].append(i)
+            # Fitness = sum of distances from members to CH
+            fitness = sum(distance(nodes_pos[node], nodes_pos[ch_indices[cidx]])
+                          for cidx, cluster_nodes in enumerate(clusters) for node in cluster_nodes)
+            scores.append(fitness)
+            # Update personal best
+            if fitness < pbest_scores[pidx]:
+                pbest_scores[pidx] = fitness
+                pbest[pidx] = ch_indices.copy()
+            # Update global best
+            if fitness < gbest_score:
+                gbest_score = fitness
+                gbest = ch_indices.copy()
 
-        # Initialize population
-        pop = init_population(alive_nodes)
+        # PSO velocity and position update
+        for pidx in range(PSO_POP):
+            for c in range(NUM_CLUSTERS):
+                r1, r2 = random.random(), random.random()
+                velocities[pidx][c] = (W * velocities[pidx][c] +
+                                       C1 * r1 * (pbest[pidx][c] - particles[pidx][c]) +
+                                       C2 * r2 * (gbest[c] - particles[pidx][c]))
+                # Update particle (round to nearest node index)
+                new_pos = int(round(particles[pidx][c] + velocities[pidx][c]))
+                new_pos = max(0, min(N_NODES - 1, new_pos))
+                particles[pidx][c] = new_pos
 
-        # evolve
-        for gen in range(GENS):
-            scores = [fitness(ind, nodes_pos, nodes_energy) for ind in pop]
-            # elitism: keep best ELITISM individuals
-            sorted_idx = np.argsort(scores)
-            new_pop = [pop[i] for i in sorted_idx[:ELITISM]]
+        # Apply GA crossover + mutation to top 50% particles
+        top_half = sorted(range(PSO_POP), key=lambda i: scores[i])[:PSO_POP // 2]
+        for i in range(0, len(top_half), 2):
+            if i + 1 >= len(top_half):
+                break
+            parent1 = particles[top_half[i]]
+            parent2 = particles[top_half[i + 1]]
+            # single point crossover
+            point = random.randint(1, NUM_CLUSTERS - 1)
+            child1 = np.concatenate([parent1[:point], parent2[point:]])
+            child2 = np.concatenate([parent2[:point], parent1[point:]])
+            # mutation: swap two CH indices
+            for child in [child1, child2]:
+                if random.random() < 0.1:
+                    a, b = random.sample(range(NUM_CLUSTERS), 2)
+                    child[a], child[b] = child[b], child[a]
+            # replace worst particles
+            worst1 = np.argmax(scores)
+            worst2 = np.argsort(scores)[-2]
+            particles[worst1] = child1
+            particles[worst2] = child2
 
-            # create rest via selection, crossover, mutation
-            while len(new_pop) < POP_SIZE:
-                parent1 = tournament_selection(pop, scores)
-                parent2 = tournament_selection(pop, scores)
-                child1, child2 = one_point_crossover(parent1, parent2)
-                child1 = mutate(child1, alive_nodes)
-                child2 = mutate(child2, alive_nodes)
-                new_pop.append(child1)
-                if len(new_pop) < POP_SIZE:
-                    new_pop.append(child2)
-            pop = new_pop
+        # Choose final CHs for this round = global best
+        chs = gbest.copy()
 
-        # after GENS, pick best individual
-        final_scores = [fitness(ind, nodes_pos, nodes_energy) for ind in pop]
-        best_idx = int(np.argmin(final_scores))
-        best_ind = pop[best_idx]
+        # Build clusters for energy computation
+        clusters = [[] for _ in range(NUM_CLUSTERS)]
+        for i in range(N_NODES):
+            if nodes_energy[i] <= 0:
+                continue
+            nearest = np.argmin([distance(nodes_pos[i], nodes_pos[ch]) for ch in chs])
+            clusters[nearest].append(i)
 
-        # build clusters & CHs from best individual
-        clusters, chs = individual_to_clusters_and_chs(best_ind, nodes_pos, nodes_energy)
-
-        # Ensure cluster/ch sizes are aligned (safety)
-        clusters = [c for c in clusters if c]
-        chs = [chs[i] for i in range(len(chs)) if i < len(clusters)]
-        if len(chs) != len(clusters):
-            min_len = min(len(chs), len(clusters))
-            clusters = clusters[:min_len]
-            chs = chs[:min_len]
-
-        # Communication phase
+        # Energy & communication update
         nodes_energy, successful_packets, total_packets = radio_comm(
-            clusters, chs, nodes_energy, nodes_pos, base_station,
-            tx_power_factor=1.0, successful_packets=0, total_packets=0
+            clusters, chs, nodes_energy, nodes_pos, base_station, tx_power_factor=1.0
         )
         nodes_energy = np.maximum(nodes_energy, 0.0)
 
         # Metrics
-        avg_e_after, pdr_after, alive_after, _ = measure_metrics(
+        avg_e_after, pdr_after, alive_after, cluster_sizes = measure_metrics(
             nodes_energy, clusters, chs, successful_packets, total_packets
         )
 
-        # Life markers
+        # Logging life events
         if first_dead_round is None and alive_after < N_NODES:
             first_dead_round = rnd
         if half_dead_round is None and alive_after <= N_HALF:
@@ -211,7 +134,7 @@ def run_pso():
         if alive_after == 0 and last_dead_round is None:
             last_dead_round = rnd
 
-        # Logs
+        # log histories
         avg_energy_history.append(avg_e_after)
         pdr_history.append(pdr_after)
         alive_nodes_history.append(alive_after)
@@ -219,13 +142,12 @@ def run_pso():
         reward_history.append(0.0)
         epsilon_history.append(0.0)
         throughput_history.append(successful_packets)
-        pdr_percent_history.append(100 * successful_packets / (total_packets + 1e-12))
+        pdr_percent_history.append(100.0 * successful_packets / (total_packets + 1e-12))
 
-        # optional visualization every X rounds (disabled by default - set modulo if you want)
         # plot_cluster(rnd, clusters, nodes_pos, chs, base_station)
 
         if alive_after == 0:
-            print(f"[PSO] All nodes died at round {rnd}")
+            print(f"[PSO+GA] All nodes died at round {rnd}")
             break
 
     return (
@@ -245,16 +167,19 @@ def plot_cluster(rnd, clusters, nodes_pos, chs, base_station):
             y = [nodes_pos[n][1] for n in members]
             plt.scatter(x, y, s=20, label=f'Cluster {cidx}' if cidx < 5 else None)
             if cidx < len(chs):
-                ch_pos = nodes_pos[chs[cidx]]
+                ch_pos = nodes_pos[int(chs[cidx])]
                 for n in members:
                     plt.plot([nodes_pos[n][0], ch_pos[0]], [nodes_pos[n][1], ch_pos[1]], 'gray', alpha=0.5)
 
-        if chs:
+        # CHs
+        if len(chs) > 0:
             ch_x = [nodes_pos[ch][0] for ch in chs]
             ch_y = [nodes_pos[ch][1] for ch in chs]
             plt.scatter(ch_x, ch_y, c='red', s=80, marker='*', label='CH')
+
+        # Base station
         plt.scatter(base_station[0], base_station[1], c='green', s=100, marker='^', label='BS')
-        plt.title(f'GA Clustering at round {rnd}')
+        plt.title(f'PSO + GA Clustering at round {rnd}')
         plt.xlim(0, AREA_SIZE)
         plt.ylim(0, AREA_SIZE)
         plt.legend(loc='upper left', bbox_to_anchor=(1.05, 1))

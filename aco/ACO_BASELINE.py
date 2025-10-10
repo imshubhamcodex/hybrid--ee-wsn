@@ -11,7 +11,7 @@ ALPHA = 1.0      # pheromone importance
 BETA = 2.0       # heuristic importance
 RHO = 0.3        # pheromone evaporation
 Q = 100          # pheromone constant
-ANTS = 10        # number of ants
+ANTS = NUM_CLUSTERS        # number of ants
 
 def run_aco():
     np.random.seed(42)

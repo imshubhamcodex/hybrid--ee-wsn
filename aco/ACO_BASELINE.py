@@ -9,7 +9,7 @@ from aco.config import N_NODES, AREA_SIZE, INIT_ENERGY, ROUNDS, N_HALF, NUM_CLUS
 # ACO parameters
 ALPHA = 1.0      # pheromone importance
 BETA = 2.0       # heuristic importance
-RHO = 0.3        # pheromone evaporation
+RHO = 0.5        # pheromone evaporation
 Q = 100          # pheromone constant
 ANTS = NUM_CLUSTERS        # number of ants
 

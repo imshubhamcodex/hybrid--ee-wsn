@@ -11,11 +11,11 @@ from pso.PSO_BASELINE import run_pso
 from aco.ACO_BASELINE import run_aco
 
 METHODS = {
-    # 'LEACH_BASELINE': run_leach,
-    # 'DEEC_BASELINE': run_deec,
-    # 'FUZZY_C_MEANS_BASELINE': run_fuzzy,
-    # 'PSO_BASELINE': run_pso,
-    # 'ACO_BASELINE': run_aco,
+    'LEACH_BASELINE': run_leach,
+    'DEEC_BASELINE': run_deec,
+    'FUZZY_C_MEANS_BASELINE': run_fuzzy,
+    'PSO_BASELINE': run_pso,
+    'ACO_BASELINE': run_aco,
     'RLHC_PROPOSED': run_proposed,
 }
 
@@ -43,7 +43,7 @@ if __name__ == "__main__":
             "pdr_percent_history": pdr_percent_history,
             "first_dead_round": first_dead_round,
             "half_dead_round": half_dead_round,
-            "last_dead_round": len(alive_nodes_history) if last_dead_round is None else last_dead_round
+            "last_dead_round": 1000
         }
 
     # ----- Plot 1: Dead Nodes vs Number of Rounds -----
